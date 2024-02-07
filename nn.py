@@ -1,142 +1,119 @@
 import numpy as np
+import time
 
-class NN:
-    def __init__(self, input_size, layers, activation_functions, loss_function, learning_rate=0.01):
+class nn:
 
-        self.weights = []
-        self.biases = []
-
-        # Initialization of weights and biases
-        d1 = input_size
-        for d2 in layers:
-            # self.weights.append(np.random.randn(d2, d1)*np.sqrt(2.0/d1))
-            self.weights.append(np.random.randn(d2, d1))
-            self.biases.append(np.zeros((d2,1)))
-            d1 = d2
-
-        # Initialize weights and biases with random values
-        # self.weights_input_hidden = np.random.randn(input_size, hidden_size)
-        # self.bias_hidden = np.zeros((1, hidden_size))
-        # self.weights_hidden_output = np.random.randn(hidden_size, output_size)
-        # self.bias_output = np.zeros((1, output_size))
-
-        self.activation_functions = activation_functions
-        self.loss_function = loss_function
-        self.learning_rate = learning_rate
+  def __init__(self, layers):
+    self.layers = layers
     
-    def forward(self, input_data):
-        self.layer_outputs = [np.array(input_data)]
+  '''
+  Completes a forward pass of a single image
+  through the network's layers and returns 
+  the categorical cross entropy loss and
+  accuracy
+  '''
+  def forward(self, x, y):
+    x = np.expand_dims(x, axis=-1)
 
-        for i in range(len(self.weights)):
-            layer_input = np.dot(self.layer_outputs[-1], self.weights[i].T) + self.biases[i]
-            layer_output = self.activation_functions[i].activate(layer_input)
-            self.layer_outputs.append(layer_output)
+    out = self.layers[0].forward((x / 255) - 0.5)
+    for layer in self.layers[1:]:
+      out = layer.forward(out)
 
-        return self.layer_outputs[-1]
+    epsilon = 1e-15
+    loss = -np.log(out[y] + epsilon)
+    acc = 1 if np.argmax(out) == y else 0
 
-    def backward(self, input_data, target):
-        # Calculate the gradient of the loss with respect to the output
-        output_error = self.loss_function.lossGradient(target, self.layer_outputs[-1])
+    return out, loss, acc
 
-        # Backpropagate the error through each layer
-        for i in range(len(self.weights) - 1, -1, -1):
-            current_output = self.layer_outputs[i + 1]
-            print("\nCurrent output:\n", str(current_output))
-            current_input = np.dot(current_output, self.weights[i]) + self.biases[i]
-            activation_derivative = self.activation_functions[i].backprop_grad(current_input)
-
-            output_error = output_error * activation_derivative
-            d_weights = np.dot(self.layer_outputs[i].T, output_error)
-            d_biases = np.sum(output_error, axis=1, keepdims=True)
-
-            # Update weights and biases using gradient descent
-            print("\ncurrent weight:\n", str(self.weights[i]))
-            print("\nd_weight:\n", str(d_weights))
-            self.weights[i] -= self.learning_rate * d_weights
-            self.biases[i] -= self.learning_rate * d_biases
-
-            # Calculate error for the next layer
-            output_error = np.dot(output_error, self.weights[i].T)
-
-    def train(self, input_data, target, epochs=1):
-        for epoch in range(epochs):
-            for i in range(len(input_data)):
-                # Forward pass
-                output = self.forward(input_data[i])
-                print("Weights:")
-                print(self.weights)
-                print("\nBiases:")
-                print(self.biases)
-                print("\nLayer outputs:")
-                print(self.layer_outputs)
-
-                # Backward pass
-                self.backward(input_data[i], np.array(target[i]))
-
-    def predict(self, input_data):
-        probabilities = self.forward(input_data)[0]
-        max_index = np.argmax(probabilities)
-        output = np.zeros_like(probabilities)
-        output[max_index] = 1
-        output = output.astype(int)
-        return output
+  '''
+  Executes a training step for a single 
+  image and label. First obtain the loss from
+  forward propogation, then backpropogate through
+  the layers and update the weights
+  '''
+  def train_step(self, x, y, lr):
     
+    out, loss, acc = self.forward(x, y)
 
-class activationFunction:
+    epsilon = 1e-15
+    gradient = np.zeros(10)
+    gradient[y] = -1 / (out[y] + epsilon)
 
-    def activate(self,X):
-        raise NotImplementedError("Abstract class.")
+    for layer in self.layers[::-1]:
+      gradient = layer.backprop(gradient, lr)
 
-    def backprop_grad(self, grad):
-        raise NotImplementedError("Abstract class.")
+    return loss, acc
+  
+  '''
+  Train a single batch and return the average loss
+  and accuracy
+  '''
+  def train_batch(self, X, Y, lr):
+    batch_size = len(X)
+    total_loss = 0
+    total_acc = 0
 
-class Relu(activationFunction):
-    def activate(self,X):
-        return X*(X>0)
+    for i in range(batch_size):
+      loss, acc = self.train_step(X[i], Y[i], lr)
+      total_loss += loss
+      total_acc += acc
 
-    def backprop_grad(self, X):
-        return (X>0).astype(np.float64)
+    avg_loss = total_loss / batch_size
+    avg_acc = total_acc / batch_size
 
-class Linear(activationFunction):
-    def activate(self,X):
-        return X
-    
-    def backprop_grad(self,X):
-        return np.ones(X.shape, dtype=np.float64)
-    
-class Sigmoid(activationFunction):
-    def activate(self, X):
-        return 1 / (1 + np.exp(-X))
+    return avg_loss, avg_acc
+  
+  '''
+  Train all batches, epochs and output loss and accuracy
+  '''
+  def train(self, X, Y, batch_size, epochs, initial_lr=0.001, decay_rate=0.9):
+    total_start_time = time.time()
+    for epoch in range(epochs):
+      print('--- Epoch %d ---' % (epoch + 1))
 
-    def backprop_grad(self, grad):
-        return grad * (1 - grad)
-    
-class Softmax(activationFunction):
-    def activate(self, X):
-        exp_values = np.exp(X - np.max(X, axis=1, keepdims=True))
-        return exp_values / np.sum(exp_values, axis=1, keepdims=True)
-    
-    def backprop_grad(self, grad):
-        return grad
+      avg_loss, avg_acc = 0, 0
+
+      batch_num = 0
+      for i in range(0, len(X), batch_size):
+        X_batch = X[i:i+batch_size]
+        Y_batch = Y[i:i+batch_size]
+        batch_start_time = time.time()
+        l, acc = self.train_batch(X_batch, Y_batch, initial_lr)
+        batch_time = time.time() - batch_start_time
+        avg_loss += l
+        avg_acc += acc
+        batch_num += 1
+
+        print(
+          '[Batch %d]: Average Loss %.3f | Accuracy: %.2f%% | Time: %.2f seconds' %
+          (batch_num,l, acc * 100, batch_time)
+        )
+
+      avg_loss /= len(X) / batch_size
+      avg_acc /= len(X) / batch_size
+      
+      initial_lr *= decay_rate
+
+      print('Average Training Loss: %.3f | Accuracy: %.2f%%' % (avg_loss, avg_acc * 100))
+
+    total_time = time.time() - total_start_time
+    print("\nTotal training time: %.2f seconds" % total_time)
 
 
-class LossFunction:
-    def loss(self, Y, Yhat):
-        raise NotImplementedError("Abstract class.")
+  '''
+  Forward propogate images through the network,
+  calculating average loss and accuracy
+  '''
+  def test(self, X, Y):
+    print('\n--- Testing the CNN ---')
 
-    def lossGradient(self, Y, Yhat):
-        raise NotImplementedError("Abstract class.")
+    loss = 0
+    num_correct = 0
+    for im, label in zip(X, Y):
+      _, l, acc = self.forward(im, label)
+      loss += l
+      num_correct += acc
 
-class SquaredLoss(LossFunction):
-    def loss(self, Y, Yhat):
-        return 0.5 * np.sum(np.square(Yhat - Y))
-
-    def lossGradient(self, Y, Yhat):
-        return Yhat - Y
-    
-class HingeLoss(LossFunction):
-    def loss(self, Y, Yhat):
-        return np.maximum(0, 1 - Y * Yhat).mean()
-
-    def lossGradient(self, Y, Yhat):
-        return np.where(Y * Yhat < 1, -Y, 0)
+    num_tests = len(X)
+    print('Test Loss:', loss / num_tests)
+    print('Test Accuracy:', num_correct / num_tests)
